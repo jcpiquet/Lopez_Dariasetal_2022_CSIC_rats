@@ -1,0 +1,208 @@
+---
+title: "Analysis Rattus"
+author: "Julien Christophe Piquet"
+date: "24/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=F)
+```
+
+```{r folder}
+folder<-"F:/Research/Projects/A_2021_CSIC_rats/Research/Data"
+```
+
+# **Analysis with combined data**
+
+## **Analysis of captures**
+
+We first analyze the number of captures and the number of recaptures per site.
+
+```{r capture and recaptures}
+library(readxl)
+captfile<-read_xlsx(paste0(folder,"/data_secr.xlsx")) # reading capture data
+# Checking if individuals were captured in multiple sites
+table_capt<-table(captfile$id,captfile$site)
+sites_ind<-apply(table_capt, 1, function(c)sum(c!=0))
+mean(sites_ind)
+#Calculating number of captures and recaptures
+length(captfile$id) # number of captures
+length(unique(captfile$id)) # number rats
+table_captures<-as.matrix(table(captfile$id))
+colnames(table_captures)<-"n_captures"
+mean(table_captures)
+sd(table_captures)
+max(table_captures)
+table_captures<-as.data.frame(table_captures)
+table_captures$id<-row.names(table_captures)
+table_captures<-merge(table_captures,captfile,by="id",all.x=T)
+table_captures<-table_captures[,c(1,2,7)]
+table_captures<-table_captures[!duplicated(table_captures$id),]
+table(table_captures$site)
+sum<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=sum)
+mean<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=mean)
+sd<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=sd)
+table<-cbind(as.data.frame(table(table_captures$site)),as.data.frame(sum)[,2],as.data.frame(mean)[,2],as.data.frame(sd)[,2])
+colnames(table)<-c("site","No_ind","No_captures","mean","sd")
+
+write.csv(table,file=paste0(folder,sep="/","table_summary.csv"))
+```
+
+## **Analysis of movements**
+
+We create the data from the capture history and the trap locations.
+
+```{r data formation combined data}
+library(readxl)
+captfile<-read_xlsx(paste0(folder,"/data_secr.xlsx")) # reading capture data
+captfile$session<-captfile$site
+captfile<-captfile[,-c(5,6)]
+write.table(captfile,file=file.path(paste0(folder,"/captfile.txt")),sep="\t",quote=F,row.names = F)
+remove(captfile)
+trapfile<-read_xlsx(paste0(folder,"/data_secr.xlsx"),sheet="trap_collapsed")
+trapfile_list<-split(trapfile,trapfile$site)
+trapfile_list<-lapply(trapfile_list,"[",-5) # we remove the site information
+mapply(function(x,y) write.table(x,file=paste0(folder,"/trap_data/",y,".txt",sep=""),row.names = F,quote=F,sep="\t"),x=trapfile_list,y=names(trapfile_list))
+```
+
+We use the previously formatted data to create the secr database.
+
+```{r secr analysis combined data}
+library(secr)
+secr_data<-read.capthist(captfile=paste0(folder,"/captfile.txt"),trapfile=list.files(paste0(folder,"/trap_data"),pattern=".txt",full.names = T),detector="single",fmt=c("trapID"),noncapt="NONE",noccasions = 9,verify=T,skip=1,binary.usage=F) # creating capthist data
+rm(list=setdiff(ls(),c("secr_data","folder")))
+```
+
+We calculate the home range statistics, with particular interest in the moves.
+
+```{r home range statistics combined data}
+# Calculating home range statistics
+dbar<-dbar(secr_data)
+moves<-moves(secr_data)
+mdmm<-MMDM(secr_data)
+rpsv<-RPSV(secr_data)
+rpsv<-as.matrix(cbind(unlist(rpsv)))
+rpsv<-rpsv[is.finite(rpsv),]
+width<-max(rpsv,na.rm = T)*4
+```
+
+We analyze the distance moved per individual between succesive captures.
+
+```{r moves}
+library(car)
+library(onewaytests)
+table_moves<-unlist(moves)
+table_moves<-as.data.frame(table_moves)
+colnames(table_moves)<-"move"
+site<-substr(row.names(table_moves),start=1,stop=3)
+table_moves<-cbind(table_moves,site)
+table_moves$move<-as.numeric(table_moves$move)
+shapiro.test(table_moves$move)
+leveneTest(table_moves$move,group=table_moves$site)
+welch.test(move~site,data=table_moves,rate=0.1)
+mean(table_moves$move)
+sd(table_moves$move)
+max(table_moves$move)
+aggregate(table_moves$move,by=list(table_moves$site),mean)
+aggregate(table_moves$move,by=list(table_moves$site),sd)
+rm(list=setdiff(ls(),c("secr_data","rpsv","width","folder")))
+```
+
+## **Analysis of density**
+
+We begin the calculation of density by setting the buffer width.
+
+```{r definition of width combined data}
+# Calculating starting values
+start<-secr.fit(secr_data,start=list(g0=0.1,sigma=max(rpsv,na.rm = T)),buffer=width,verify=F,detectfn = 0,biasLimit=0.01,method="Nelder-Mead",CL=T,trace=F)
+## Checking buffer width
+buffer_width<-esa.plot(start,max.buffer = width*2,detectfn = 0,noccasions = 3,session = c(names(secr_data))) # fitting density against buffer width
+buffer_width<-lapply(buffer_width,function(x) x$buffer[which.min(x$density)]) # finding for each site-session combination the buffer width were density stabilizes
+max_width<-max(unlist(buffer_width)) # maximum value of buffer width over all site-session combinations for which density stabilizes
+rm(list=setdiff(ls(),c("secr_data","max_width","start","folder")))
+```
+Once buffer width is set, we determine the best spatial detection function using AICc, and examine the potential occurrence of learned responses from R. rattus.
+
+```{r model density estimation with combined data}
+memory.limit(80000)
+
+# Halfnormal model
+
+secr.halfnormal<-secr.fit(secr_data,buffer=max_width,detectfn = 0,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+
+# Negative exponential model
+
+secr.negexp<-secr.fit(secr_data,buffer=max_width,detectfn = 2,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+
+# Hazard rate model
+
+secr.hazrat<-secr.fit(secr_data,buffer=max_width,detectfn = 1,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+
+list_models<-list(secr.halfnormal,secr.negexp,secr.hazrat)
+
+AIC_table_detecfn<-lapply(list_models,function(x) AIC(x))
+AIC<-sapply(AIC_table_detecfn,"[[","AIC")
+AICc<-sapply(AIC_table_detecfn,"[[","AICc")
+model<-sapply(AIC_table_detecfn,"[[","model")
+detection_function<-sapply(AIC_table_detecfn,"[[","detectfn")
+AIC_table_detecfn<-cbind(model,detection_function,AIC,AICc)
+AIC_table_detecfn
+
+# Checking learned responses
+secr.halfnorm.learned<-secr.fit(secr_data,model=list(g0~b),buffer=max_width,detectfn = 0,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+
+AIC(secr.halfnorm.learned)
+
+final_model<-secr.halfnormal
+
+density<-derived(final_model,se.esa=F,se.D=T)
+
+density_estimate<-lapply(density,"[[","estimate")
+density_estimate<-lapply(density_estimate,"[",2)
+density_se<-lapply(density,"[[","SE.estimate")
+density_se<-lapply(density_se,"[",2)
+cvd<-lapply(density,"[[","CVD")
+cvd<-lapply(cvd,"[",2)
+
+table_density<-cbind(do.call(rbind,density_estimate),do.call(rbind,density_se),do.call(rbind,cvd))
+
+colnames(table_density)<-c("denstiy","se","cvd")
+
+write.table(table_density,file=paste0(folder,"/density_data.csv"),sep=",",row.names = T,col.names = T)
+
+table_density<-as.data.frame(table_density)
+mean(table_density$denstiy)
+sd(table_density$denstiy)
+
+table_density$location<-c(rep("TENO",5),rep("GUAZA",2))
+
+shapiro.test(table_density$denstiy)
+leveneTest(table_density$denstiy,table_density$location)
+kruskal.test(table_density$denstiy,table_density$location)
+aggregate(table_density$denstiy,list(table_density$location),mean)
+aggregate(table_density$denstiy,list(table_density$location),sd)
+```
+
+# **Correlation with rat abundance and frequency of occurrence**
+
+```{r correlations}
+library(readxl)
+density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE)
+abundance_fo<-read_excel(path=paste0(folder,"/abundance_fo.xlsx"))
+density_table<-cbind(density_table,abundance_fo[,2:length(abundance_fo)])
+with(density_table,cor.test(denstiy,abundance))
+with(density_table[-3,],cor.test(denstiy,abundance))
+with(density_table,cor.test(denstiy,fo))
+```
+
+# **Correlation with lizard census**
+
+```{r lizard census}
+correlations_dens<-lapply(density_table[,6:length(density_table)],function(x) with(density_table,cor.test(denstiy,x)))
+correlations_fo<-lapply(density_table[,6:length(density_table)],function(x) with(density_table,cor.test(fo,x)))
+correlations_dens<-lapply(density_table[-4,6:length(density_table)],function(x) with(density_table[-4,],cor.test(denstiy,x)))
+correlations_fo<-lapply(density_table[-4,6:length(density_table)],function(x) with(density_table[-4,],cor.test(fo,x)))
+write.csv(density_table,file=paste0(folder,sep="/","density_table.csv"))
+```
+
