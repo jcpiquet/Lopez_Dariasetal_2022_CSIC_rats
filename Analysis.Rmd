@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE, warning=F)
 ```
 
 ```{r folder}
-folder<-"F:/Research/Projects/A_2021_CSIC_rats/Research/Data"
+folder<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data"
 ```
 
 # **Analysis with combined data**
@@ -167,42 +167,62 @@ cvd<-lapply(cvd,"[",2)
 
 table_density<-cbind(do.call(rbind,density_estimate),do.call(rbind,density_se),do.call(rbind,cvd))
 
-colnames(table_density)<-c("denstiy","se","cvd")
+colnames(table_density)<-c("density","se","cvd")
 
 write.table(table_density,file=paste0(folder,"/density_data.csv"),sep=",",row.names = T,col.names = T)
 
 table_density<-as.data.frame(table_density)
-mean(table_density$denstiy)
-sd(table_density$denstiy)
+mean(table_density$density)
+sd(table_density$density)
 
 table_density$location<-c(rep("TENO",5),rep("GUAZA",2))
 
-shapiro.test(table_density$denstiy)
-leveneTest(table_density$denstiy,table_density$location)
-kruskal.test(table_density$denstiy,table_density$location)
-aggregate(table_density$denstiy,list(table_density$location),mean)
-aggregate(table_density$denstiy,list(table_density$location),sd)
+shapiro.test(table_density$density)
+leveneTest(table_density$density,table_density$location)
+kruskal.test(table_density$density,table_density$location)
+aggregate(table_density$density,list(table_density$location),mean)
+aggregate(table_density$density,list(table_density$location),sd)
 ```
 
 # **Correlation with rat abundance and frequency of occurrence**
 
 ```{r correlations}
 library(readxl)
-density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE)
+density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE,sep=";")
 abundance_fo<-read_excel(path=paste0(folder,"/abundance_fo.xlsx"))
 density_table<-cbind(density_table,abundance_fo[,2:length(abundance_fo)])
-with(density_table,cor.test(denstiy,abundance))
-with(density_table[-3,],cor.test(denstiy,abundance))
-with(density_table,cor.test(denstiy,fo))
+plot(density_table$density,density_table$abundance)
+with(density_table,cor.test(density,abundance,method="pearson"))
+with(density_table[-3,],cor.test(density,abundance,method="pearson"))
+plot(density_table$density,density_table$fo_exc)
+text(density_table$density,density_table$fo_exc,density_table$site)
+plot(density_table$density,density_table$fo_ind)
+text(density_table$density,density_table$fo_ind,density_table$site)
+with(density_table,cor.test(density,fo_exc,method="spearman"))
+with(density_table,cor.test(density,fo_ind,method="spearman"))
 ```
 
 # **Correlation with lizard census**
 
 ```{r lizard census}
-correlations_dens<-lapply(density_table[,6:length(density_table)],function(x) with(density_table,cor.test(denstiy,x)))
-correlations_fo<-lapply(density_table[,6:length(density_table)],function(x) with(density_table,cor.test(fo,x)))
-correlations_dens<-lapply(density_table[-4,6:length(density_table)],function(x) with(density_table[-4,],cor.test(denstiy,x)))
-correlations_fo<-lapply(density_table[-4,6:length(density_table)],function(x) with(density_table[-4,],cor.test(fo,x)))
-write.csv(density_table,file=paste0(folder,sep="/","density_table.csv"))
+library(car)
+prop_list<-lapply(density_table[,11:14],function(x) (x/density_table$liz_num)*100)
+names(prop_list)<-lapply(colnames(density_table[,11:14]),function(x) paste0("prop",sep="_",x))
+density_table<-cbind(density_table,do.call(cbind,prop_list))
+density_table$prop_diff_liz<-(density_table$diff_liz/density_table$liz_past)*100
+
+correlations_dens<-lapply(density_table[,8:length(density_table)],function(x) with(density_table,cor.test(density,x,method="spearman")))
+correlations_dens<-cbind(do.call(rbind,lapply(correlations_dens,"[[","estimate")),do.call(rbind,lapply(correlations_dens,"[[","p.value")))
+write.csv(correlations_dens,file=paste0(folder,sep="/","correlation_dens.csv"))
+
+correlations_fo_exc<-lapply(density_table[,8:length(density_table)],function(x) with(density_table,cor.test(fo_exc,x,method="spearman")))
+correlations_fo_exc<-cbind(do.call(rbind,lapply(correlations_fo_exc,"[[","estimate")),do.call(rbind,lapply(correlations_fo_exc,"[[","p.value")))
+write.csv(correlations_fo_exc,file=paste0(folder,sep="/","correlation_fo_exc.csv"))
+
+correlations_fo_ind<-lapply(density_table[,8:length(density_table)],function(x) with(density_table,cor.test(fo_ind,x,method="spearman")))
+correlations_fo_ind<-cbind(do.call(rbind,lapply(correlations_fo_ind,"[[","estimate")),do.call(rbind,lapply(correlations_fo_ind,"[[","p.value")))
+write.csv(correlations_fo_ind,file=paste0(folder,sep="/","correlation_fo_ind.csv"))
+
+write.csv(density_table,file=paste0(folder, sep="/","density_table.csv",col.names=T))
 ```
 
