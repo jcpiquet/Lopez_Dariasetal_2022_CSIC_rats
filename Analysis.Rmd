@@ -206,8 +206,9 @@ with(density_table,cor.test(density,fo_ind,method="spearman"))
 
 ```{r lizard census}
 library(car)
-prop_list<-lapply(density_table[,11:14],function(x) (x/density_table$liz_num)*100)
-names(prop_list)<-lapply(colnames(density_table[,11:14]),function(x) paste0("prop",sep="_",x))
+density_table$adults<-density_table$fem_num+density_table$mal_num
+prop_list<-lapply(density_table[,c(11:14,17)],function(x) (x/density_table$liz_num)*100)
+names(prop_list)<-lapply(colnames(density_table[,c(11:14,17)]),function(x) paste0("prop",sep="_",x))
 density_table<-cbind(density_table,do.call(cbind,prop_list))
 density_table$prop_diff_liz<-(density_table$diff_liz/density_table$liz_past)*100
 
@@ -222,6 +223,10 @@ write.csv(correlations_fo_exc,file=paste0(folder,sep="/","correlation_fo_exc.csv
 correlations_fo_ind<-lapply(density_table[,8:length(density_table)],function(x) with(density_table,cor.test(fo_ind,x,method="spearman")))
 correlations_fo_ind<-cbind(do.call(rbind,lapply(correlations_fo_ind,"[[","estimate")),do.call(rbind,lapply(correlations_fo_ind,"[[","p.value")))
 write.csv(correlations_fo_ind,file=paste0(folder,sep="/","correlation_fo_ind.csv"))
+
+# Checking relationship between the number of lizards/rat density and site area
+
+lapply(density_table[,c(2,5,8)],function(x) with(density_table, cor.test(x,area,method="spearman")))
 
 write.csv(density_table,file=paste0(folder, sep="/","density_table.csv",col.names=T))
 ```
