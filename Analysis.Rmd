@@ -61,6 +61,7 @@ captfile<-captfile[,-c(5,6)]
 write.table(captfile,file=file.path(paste0(folder,"/captfile.txt")),sep="\t",quote=F,row.names = F)
 remove(captfile)
 trapfile<-read_xlsx(paste0(folder,"/data_secr.xlsx"),sheet="trap_collapsed")
+trapfile<-trapfile[,-c(6:14)]
 trapfile_list<-split(trapfile,trapfile$site)
 trapfile_list<-lapply(trapfile_list,"[",-5) # we remove the site information
 mapply(function(x,y) write.table(x,file=paste0(folder,"/trap_data/",y,".txt",sep=""),row.names = F,quote=F,sep="\t"),x=trapfile_list,y=names(trapfile_list))
@@ -122,6 +123,7 @@ buffer_width<-lapply(buffer_width,function(x) x$buffer[which.min(x$density)]) # 
 max_width<-max(unlist(buffer_width)) # maximum value of buffer width over all site-session combinations for which density stabilizes
 rm(list=setdiff(ls(),c("secr_data","max_width","start","folder")))
 ```
+
 Once buffer width is set, we determine the best spatial detection function using AICc, and examine the potential occurrence of learned responses from R. rattus.
 
 ```{r model density estimation with combined data}
@@ -213,16 +215,23 @@ mean_area<-tapply(area_table$area,area_table$site,mean)
 sd_area<-tapply(area_table$area,area_table$site,sd)
 area_table<-cbind(mean_area,sd_area)
 area_table
+rm(list = setdiff(ls(),"folder"))
 ```
 
 
 # **Correlation with rat abundance and frequency of occurrence**
 
 ```{r correlations}
+
+#Re-uploading the tables
+
 library(readxl)
-density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE,sep=";")
+density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE,sep=",")
 abundance_fo<-read_excel(path=paste0(folder,"/abundance_fo.xlsx"))
 density_table<-cbind(density_table,abundance_fo[,2:length(abundance_fo)])
+
+# Plotting
+
 plot(density_table$density,density_table$abundance)
 with(density_table,cor.test(density,abundance,method="spearman"))
 plot(density_table$density,density_table$fo_exc)
@@ -237,31 +246,36 @@ with(density_table,cor.test(density,fo_ind,method="spearman"))
 
 ```{r lizard census}
 library(car)
-density_table$adults<-density_table$fem_num+density_table$mal_num
-prop_list<-lapply(density_table[,c(11:14,17)],function(x) (x/density_table$liz_num)*100)
-names(prop_list)<-lapply(colnames(density_table[,c(11:14,17)]),function(x) paste0("prop",sep="_",x))
-density_table<-cbind(density_table,do.call(cbind,prop_list))
-density_table$prop_diff_liz<-(density_table$diff_liz/density_table$liz_past)*100
-remove(prop_list)
-```
 
-```{r analysis}
-correlations_dens<-lapply(density_table[,c(8,11,16,17,23)],function(x) with(density_table,cor.test(density,x,method="spearman")))
+# Calculating reproductive vs. non-reproductive individuals
+
+## Non-reproductive (juveniles+average-sized lizards)
+
+density_table$non_reproductive<-density_table$juv_num+density_table$ave_num
+
+## Reproductive individuals (males+females+non-identified individuals)
+
+density_table$non_identified<-density_table$liz_num-apply(density_table[,11:14],1,sum)
+density_table$reproductive<-density_table$fem_num+density_table$mal_num+density_table$non_identified
+
+# Calculating population trend
+
+density_table$population_trend<-(density_table$diff_liz/density_table$liz_past)*100
+
+# Analysis
+
+correlations_dens<-lapply(density_table[,c(7,15,16,18,19)],function(x) with(density_table,cor.test(density,x,method="spearman")))
 correlations_dens<-cbind(do.call(rbind,lapply(correlations_dens,"[[","estimate")),do.call(rbind,lapply(correlations_dens,"[[","p.value")))
 write.csv(correlations_dens,file=paste0(folder,sep="/","correlation_dens.csv"))
 
-correlations_fo_exc<-lapply(density_table[,c(8,11,16,17,23)],function(x) with(density_table,cor.test(fo_exc,x,method="spearman")))
+correlations_fo_exc<-lapply(density_table[,c(7,15,16,18,19)],function(x) with(density_table,cor.test(fo_exc,x,method="spearman")))
 correlations_fo_exc<-cbind(do.call(rbind,lapply(correlations_fo_exc,"[[","estimate")),do.call(rbind,lapply(correlations_fo_exc,"[[","p.value")))
 write.csv(correlations_fo_exc,file=paste0(folder,sep="/","correlation_fo_exc.csv"))
 
-correlations_fo_ind<-lapply(density_table[,8:length(density_table)],function(x) with(density_table,cor.test(fo_ind,x,method="spearman")))
-correlations_fo_ind<-cbind(do.call(rbind,lapply(correlations_fo_ind,"[[","estimate")),do.call(rbind,lapply(correlations_fo_ind,"[[","p.value")))
-write.csv(correlations_fo_ind,file=paste0(folder,sep="/","correlation_fo_ind.csv"))
-
 # Checking relationship between the number of lizards/rat density and site area
 
-lapply(density_table[,c(2,5,8)],function(x) with(density_table, cor.test(x,area,method="spearman")))
+lapply(density_table[,c(1,4,7)],function(x) with(density_table, cor.test(x,area,method="spearman")))
 
-write.csv(density_table,file=paste0(folder, sep="/","density_table.csv",col.names=T))
+write.csv(density_table,file=paste0(folder, sep="/","density_table.csv"),col.names=T)
 ```
 
