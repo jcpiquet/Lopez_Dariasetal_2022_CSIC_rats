@@ -1,310 +1,798 @@
 ---
-title: "Analysis Rattus"
-author: "Julien Christophe Piquet"
-date: "24/7/2021"
+title: "Analysis"
+author: "Julien C. Piquet"
+date: "2024-01-17"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning=F)
+knitr::opts_chunk$set(echo = TRUE)
 ```
+
+# **PACKAGES, FOLDERS AND DATA CREATION**
+
+We first load all packages needed.
+
+```{r packages}
+library(pacman)
+
+p_load(readxl,dplyr,lubridate,tidyr,secr,car,onewaytests,VGAM)
+```
+
+Now we set the folders were data will be stored.
 
 ```{r folder}
-folder<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data"
+folder<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data/"
+
+folder_files<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data/files"
 ```
 
-# **Analysis with combined data**
+We create the data for the analysis.
 
-## **Analysis of captures**
+```{r data}
+data<-read_xlsx(
+  paste0(folder,"/data.xlsx"),
+  sheet="data") # reading data
 
-We first analyze the number of captures and the number of recaptures per site.
+# FACTORS
 
-```{r capture and recaptures}
-library(readxl)
-captfile<-read_xlsx(paste0(folder,"/data_secr.xlsx")) # reading capture data
+data[,c(1,5:9,12:ncol(data))]<-lapply(data[,c(1,5:9,12:ncol(data))],as.factor)
 
-# Checking if individuals were captured in multiple sites
+# DATE AND TIME
 
-table_capt<-table(captfile$id,captfile$site) # creating a table with the number of captures per site and individual
-sites_ind<-apply(table_capt, 1, function(c)sum(c!=0)) # retaining only rows !=0 (i.e. those representing captures)
-mean(sites_ind) # checking individuals only appear in one site
+data$date_layout<-as.POSIXct(data$date_layout)
 
-#Calculating number of captures and recaptures
+year(data$time_start)<-year(data$date_layout)
 
-length(captfile$id) # number of captures
-length(unique(captfile$id)) # number rats
-table_captures<-as.matrix(table(captfile$id))
-colnames(table_captures)<-"n_captures"
-mean(table_captures)
-sd(table_captures)
-max(table_captures)
-table_captures<-as.data.frame(table_captures)
-table_captures$id<-row.names(table_captures) # including rat id
-table_captures<-merge(table_captures,captfile,by="id",all.x=T) # incorporation of site information
-table_captures<-table_captures[,c(1,2,7)] # retaining id, capture number and site
-table_captures<-table_captures[!duplicated(table_captures$id),] # removing duplicates (i.e. recaptures, which are included)
-table(table_captures$site) # number of individuals per site
-sum<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=sum) # total number of (re)captures per site
-mean<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=mean) # average number of (re)captures per site
-sd<-aggregate(table_captures$n_captures,by=list(table_captures$site),FUN=sd) # SD pf the number of (re)captures per site
-table<-cbind(as.data.frame(table(table_captures$site)),as.data.frame(sum)[,2],as.data.frame(mean)[,2],as.data.frame(sd)[,2])
-colnames(table)<-c("site","No_ind","No_captures","mean","sd")
+year(data$time_end)<-year(data$date_layout)
 
-write.csv(table,file=paste0(folder,sep="/","table_summary.csv"))
+month(data$time_start)<-month(data$date_layout)
+
+month(data$time_end)<-month(data$date_layout)
+
+day(data$time_start)<-day(data$date_layout)
+
+day(data$time_end)<-day(data$date_layout)+1
+
+# NATURAL PROTECTED AREAS
+
+data$npa<-NA
+
+data[data$site=="par"|data$site=="nam",]$npa<-"guaza"
+
+data[is.na(data$npa),]$npa<-"teno"
 ```
 
-## **Analysis of movements**
+# **BASIC TRAPPING DATA**
 
-We create the data from the capture history and the trap locations.
+We obtain basic trapping data.
 
-```{r data formation combined data}
-library(readxl)
+```{r basic trapping data}
 
-captfile<-read_xlsx(paste0(folder,"/data_secr.xlsx")) # reading capture data
+# TRAPS PER SITE AND DAY
+
+trap_count<-as.data.frame(
+  count(data,site,day))
+
+round(
+  mean(trap_count[,3]),
+  2)
+round(
+  sd(trap_count[,3]),
+  2)
+
+remove(trap_count)
+
+# TRAPPING EFFORT
+
+effort<-unique(data[,c(1,3:4)]) # removing duplicates
+
+mean( # calculating the average number of hours spent trapping
+  as.numeric( # converting to numeric to allow mean calculation
+    effort$time_end-effort$time_start),
+  na.rm=T)*9*7 # multiplying per day and site
+
+# NUMBER OF RATS AND FECES
+
+table(data$outcome) # number of rats
+
+table(data[data$outcome!="mus",]$feces) # number of feces, after removing feces from Mus musculus
+
+## Number of individuals
+
+length(unique(data[complete.cases(data$id),]$id))
+
+## Percentage of captures by marked animals
+
+nrow(data[data$outcome=="rat"|data$outcome=="escaped",])/nrow(data[data$outcome=="rat"|data$outcome=="escaped"|data$outcome=="dead",]) *100 
+
+## Captures per trapping session
+
+table(data$outcome,data$session)
+
+# RAT DATA
+
+## Captures per sex category
+
+count(data[data$outcome=="rat"| data$outcome=="dead" ,],sex)
+
+## Individual recaptures
+
+recaptures<-count(data,id) # counting the number of captures per individual
+
+recaptures<-recaptures[complete.cases(recaptures$id),] # removing empty cells 
+
+round(mean(recaptures$n),2) # average number of captures
+
+round(sd(recaptures$n),2)
+
+max(recaptures$n) # maximum number of captures
+
+### Checking recaptures occurred within the same site
+ 
+recaptures<-as.data.frame(table(data$id,data$site)) # retrieving number of captures of each individual in each site
+
+nrow(recaptures[recaptures$Freq>0,]) # checking the number of rows equals the number of individuals, which means each individual is only present in one site
+
+remove(recaptures)
+
+# BY-CATCHES
+
+table(data$outcome)
+```
+
+# **LIZARD DETECTION**
+
+We analyze the lizard detection.
+
+```{r lizard detection}
+
+# PERCENTAGE OF FECES WITH LIZARDS
+
+(table(data[data$outcome!="mus",]$detection_lizards,
+       data[data$outcome!="mus",]$feces)[2,2]/
+   sum(table(data[data$outcome!="mus",]$detection_lizards,
+         data[data$outcome!="mus",]$feces)[,2]))*100 
+
+# INDIVIDUALS THAT CONSUMED LIZARDS
+
+lizards<-data[complete.cases(data$detection_lizards),]
+
+lizards<-lizards[lizards$outcome!="mus",]
+
+lizards<-lizards[lizards$detection_lizards==1,]
+
+length(unique(lizards$id))
+
+table(lizards$sex) # checking how many adults and juveniles consumed lizards
+
+max(count(lizards,id)[,2]) # maximum number of feces from a single individual in which lizards were detected
+
+min(count(lizards,id)[,2]) # maximum number of feces from a single individual in which lizards were detected
+
+# DETECTIONS PER SITE
+
+table(lizards$site)
+
+# CALCULATION OF FOEXC PER SITE
+
+fo<-count(data,site,detection_lizards) 
+
+fo<-fo[fo$detection_lizards==1,] # retaining only detections
+
+fo<-fo[complete.cases(fo),] # removing empty cells
+
+fo<-fo[,c(1,3)]
+
+feces<-count(data[data$outcome!="mus",],feces,site) # number of feces per site, after removing Mus musculus captures
+
+feces<-feces[feces$feces=="yes",] # retaining only feces
+
+feces<-feces[complete.cases(feces),] # removing empty cells
+
+feces<-feces[,2:3]
+
+colnames(feces)[2]<-"feces" 
+
+fo$feces<-feces$feces # merging both datasets to calculate FO
+
+fo$foexc<-(fo$n/fo$feces)*100 # FO calculation per site
+
+colnames(fo)[2]<-"detection_lizards"
+
+(sum(fo$detection_lizards)/sum(fo$feces))*100 # general FO
+
+# CALCULATION OF FOIND PER SITE
+
+rat_detection_lizard<-count(data[data$outcome!="mus",],site,id,detection_lizards) # counting without Mus musculus
+
+rat_detection_lizard<-rat_detection_lizard[complete.cases(rat_detection_lizard),] # removing empty cells
+
+rat_detection_lizard<-rat_detection_lizard[rat_detection_lizard$detection_lizards==1,] # retaning only positive counts
+
+rat_detection_lizard<-sapply(split(rat_detection_lizard,
+                                   rat_detection_lizard$site),
+                             nrow) # number of detections
+
+rat_detection_lizard<-as.data.frame(rat_detection_lizard) # as.data.frame to merge easily
+
+rats<-count(data,site,outcome,id)
+
+rats<-rats[rats$outcome=="rat" | rats$outcome=="escaped"|rats$outcome=="dead", ] # number off rats captured
+
+rats<-sapply(split(rats,rats$site),
+             function(x) length(unique(x$id))) # distinct individuals
+
+rat_detection_lizard$rats<-rats # merging for FO calculation
+
+rat_detection_lizard$fo_ind<-(rat_detection_lizard$rat_detection_lizard/rat_detection_lizard$rats)*100 # FOind calculation per site
+
+fo$fo_ind<-rat_detection_lizard$fo_ind
+
+(sum(rat_detection_lizard$rat_detection_lizard)/sum(rat_detection_lizard$rats))*100 # general FO
+
+# DETECTIONS ACROSS SEASONS
+
+count(lizards,session,detection_lizards) # number of detections per session
+
+lizards<-data[complete.cases(data$detection_lizards),] # removing incomplete data
+
+lizards<-lizards[lizards$detection_lizards==1,]
+
+tapply(lizards,lizards$session,function(x)
+  length(unique(x$id))) # number of individuals tested positive
+
+# DETECTIONS IN TENO AND GUAZA
+
+table(lizards$npa)
+
+tapply(lizards,lizards$npa,function(x)
+  length(unique(x$id))) # number of individuals tested positive
+
+rm(list=setdiff(ls(),c("folder","folder_files","data","fo")))
+```
+
+# **CPUE ANALYSIS**
+
+This section intends to calculate CPUE.
+
+```{r cpue}
+
+traps<-count(data,site,day,trap_type) # calculating number of traps of each type
+
+sprung_traps<-count(data[data$active=="no",],site,day,trap_type) # calculating sprung_traps
+
+sprung_traps$code<-with(sprung_traps, paste0(site, day, trap_type)) # creating a code to merge datasets
+
+traps$code<-with(traps,paste0(site, day, trap_type))
+
+cpue<-merge(traps,sprung_traps,by="code",all.x=T) # merging
+
+cpue<-cpue[,c(1:5,9)] # removing duplicate columns
+
+colnames(cpue)<-c("code","site","day","trap_type","trap_no","sprung_traps")
+
+cpue[is.na(cpue$sprung_traps),]$sprung_traps<-0 # changing empty cells to 0
+
+remove(traps,sprung_traps)
+
+rat_captures<-count(data[data$outcome=="rat",],site,day,trap_type,outcome) # counting rat capures
+
+dead_captures<-count(data[data$outcome=="dead",],site,day,trap_type,outcome) # dead individuals
+
+rat_captures$code<-with(rat_captures,paste0(site, day, trap_type)) # merging code
+
+dead_captures$code<-with(dead_captures,paste0(site, day, trap_type)) # merging code
+
+cpue<-merge(cpue,rat_captures,by="code",all.x=T) # merging 
+
+cpue<-merge(cpue,dead_captures,by="code",all.x=T) # merging 
+
+cpue<-cpue[,c(1:6,11,16)] # removing duplicate columns
+
+colnames(cpue)[c(2,3,4,7,8)]<-c("site","day","trap_type","rats","dead_rats") 
+
+cpue[, 7:8][is.na(cpue[, 7:8])] <- 0 # replacing empty cells
+
+sum(cpue$rats) # checking captures coincide
+
+sum(cpue$dead_rats)
+
+cpue$total_captures<-cpue$rats+cpue$dead_rats # summing dead individuals
+
+cpue$cpue<-cpue$total_captures/(cpue$trap_no-cpue$sprung_traps) # cpue calculation
+
+# COMPARING CPUE AMONG TRAPS AND SITES
+
+## Basic information
+
+aggregate(cpue~trap_type,data=cpue,mean) 
+
+cpue_site<-cbind(aggregate(cpue~site,data=cpue,mean),
+                 sd=aggregate(cpue~site,data=cpue,sd)[,2]
+                 ) 
+
+cpue_site[,2:3]<-lapply(cpue_site[,2:3],function(x) round(x,3))
+
+cpue_site$tom<-aggregate(cpue~site,data=cpue[cpue$trap_type=="tom",],mean)[,2]
+
+cpue_site$ave<-aggregate(cpue~site,data=cpue[cpue$trap_type=="ave",],mean)[,2]
+
+cpue_site$sma<-aggregate(cpue~site,data=cpue[cpue$trap_type=="sma",],mean)[,2]
+
+mean(cpue$cpue)
+
+sd(cpue$cpue)
+
+# COMPARING THE NUMBER OF TRAPS AMONG SITES
+
+lapply(split(data,data$trap_type),function(x)
+  chisq.test( # chi-square of trap number distribution among sites and days
+    table(x$site,x$day),
+    simulate.p.value = T, # simulated to overcome low expected values
+    B=10000
+  ))
+
+chisq.test( # chi-square repeated removing sessions in which FIXMAN traps were not used
+  table(droplevels(data[data$trap_type=="ave" & as.numeric(data$day)<4,]$site),
+        droplevels(data[data$trap_type=="ave" & as.numeric(data$day)<4,]$day)),
+  simulate.p.value = T, # simulated to overcome low expected values
+  B=10000
+)
+
+remove(dead_captures,rat_captures,cpue)
+```
+
+# **DENSITY ANALYSIS**
+
+We  begin the section to obtain rat density. First, we upload the data that were prepared or this section.
+
+```{r data density}
+
+captfile<-read_xlsx(
+  paste0(folder,"/data.xlsx"),
+  sheet="capture_data") # reading capture data
+
+trapfile<-read_xlsx(
+  paste0(folder,"/data.xlsx"),
+  sheet="traps")
+
 captfile$session<-captfile$site # seven session (one per site)
-captfile<-captfile[,-c(5,6)] # removing unnecessary columns
-write.table(captfile,file=file.path(paste0(folder,"/captfile.txt")),sep="\t",quote=F,row.names = F)
-remove(captfile)
-trapfile<-read_xlsx(paste0(folder,"/data_secr.xlsx"),sheet="trap_location")
+
+captfile<-captfile[,-c(3,6:7)] # removing id_day, site and session_site
+
+colnames(captfile)[3]<-"occasion" # changing names of the columns
+```
+
+Since data were prepared manually, we first check that there are no errors.
+
+```{r data verification}
+
+# CAPTURES COMPARISON
+
+captures<-count(data[data$outcome=="rat"|data$outcome=="dead",],outcome,day,site) # counting captures in the general data (escaped individuals not included)
+
+captures_captfile<-count(captfile,session,occasion) # counting captures in the captfile data (escaped individuals not included)
+
+## Ordering data the same manner
+
+captures<-captures[order(captures$site,captures$day,captures$outcome),]
+
+captures_captfile<-captures_captfile[order(captures_captfile$session,captures_captfile$occasion),]
+
+# Comparing sites and capture numbers
+
+captures<-cbind(captures,captures_captfile) # merging both datasets
+
+captures$site_verification<-apply(captures,1,function(x) setequal(captures$site,captures$session)) # verifying for each row that site names coincides
+
+nrow(captures[captures$site_verification=="FALSE",]) # number of rows where site names are not equal
+
+mean(captures[,4]-captures[,7]) # comparing captures
+
+remove(captures,captures_captfile)
+
+# CHECKING TRAPS
+
+## Checking effort
+
+data$utm_code<-paste0(data$utm_x,"_",data$utm_y) # creating the utm code that identifies each trap location
+
+traps<-count(data[data$active=="yes",],utm_code,site,day) # counting active traps per day and site
+
+mapply(function(x,y) x[,2]-y[,2], # automatically subtracting counts 
+       x=lapply(trapfile[,6:14],
+                function(z) aggregate(z~site, # aggregating in a list per day and site
+                                      data=trapfile,
+                                      sum)),
+       y=lapply(seq(1,9,1),function(x) aggregate(n~site,
+                                                 traps[traps$day==x,],
+                                                 sum)) # aggregating in a list per day and site
+)
+
+## Checking trap type
+
+traps<-count(data[data$active=="yes",],site,day,trap_type) # counting active traps per day, site and type
+
+colnames(trapfile)[16:24]<-paste0("trap_type","_",seq(1,9,1))  # assigning a name to trap_type columns
+
+trapfile[,16:24]<-lapply(trapfile[,16:24], as.factor) # changing them to factor
+
+tables<-lapply(trapfile[,16:24],function(x) table(trapfile$site,x)) # per site
+
+tables<-lapply(tables,as.data.frame) # transforming to dataset
+
+tables<-lapply(tables,function(x) x[order(x$Var1,x$x),]) # re-ordering datasets
+
+tables_traps<-lapply(split(traps,traps$day),function(x) aggregate(n~trap_type+site,x,sum)) # calculting the number of traps per type and day
+
+tables<-lapply(tables_traps,function(x) x[order(x$site,x$trap_type),]) # re-ordering 
+
+mapply(function(x,y) x[,3]-y[,3], # subtracting
+       x=tables,
+       y=tables_traps)
+
+rm(list=setdiff(ls(),c("captfile","trapfile","data","fo","folder","folder_files","cpue_site")))
+```
+
+We now prepare the data for the analysis.
+
+```{r data prepr}
+
+write.table(captfile[,-5],
+            file=file.path(
+              paste0(folder_files,"/captfile.txt")),
+            sep="\t",quote=F,row.names = F)
+
+trapfile<-trapfile[,c(5,2:3,15,25,4)] # re-ordering and keeping only point, utms, effort and trap_type, plus site info
+
 trapfile_list<-split(trapfile,trapfile$site) # splitting per site
-trapfile_list<-lapply(trapfile_list,"[",-5) # we remove the site information
-mapply(function(x,y) write.table(x,file=paste0(folder,"/trap_data/",y,".txt",sep=""),row.names = F,quote=F,sep="\t"),x=trapfile_list,y=names(trapfile_list))
+
+trapfile_list<-lapply(trapfile_list,"[",-6) # we remove the site information
+
+mapply(function(x,y) # writing separate files per session (site)
+  write.table(x,file=
+                paste0(folder_files,"/traps/",y,".txt",sep=""),
+              row.names = F,quote=F,sep="\t"),
+  x=trapfile_list,y=names(trapfile_list))
+
+rm(list=setdiff(ls(),c("data","fo","folder","folder_files","cpue_site")))
 ```
 
-We use the previously formatted data to create the secr database.
+The previous data now have to be integrated within secr.
 
-```{r secr analysis combined data}
-library(secr)
-secr_data<-read.capthist(captfile=paste0(folder,"/captfile.txt"),trapfile=list.files(paste0(folder,"/trap_data"),pattern=".txt",full.names = T),detector="single",fmt=c("trapID"),noncapt="NONE",noccasions = 9,verify=T,skip=1,binary.usage=F) # creating capthist data
-rm(list=setdiff(ls(),c("secr_data","folder")))
+```{r secr data}
+
+secr_data<-read.capthist(captfile=
+                           paste0(folder_files,"/captfile.txt"),
+                        trapfile=list.files(
+                              paste0(folder_files,"/traps"),
+                              pattern=".txt",full.names = T),
+                        detector="single",
+                        fmt=c("trapID"),
+                        noncapt="NONE",
+                        noccasions = 9,
+                        verify=T,
+                        skip=1,
+                        binary.usage=F) # creating capthist data
+
+for (i in 1:7) timevaryingcov(traps(secr_data[[i]])) <- list(type = 1:9) # specifying the type of trap for each session and day
 ```
 
-We calculate the home range statistics, with particular interest in the moves.
+We calculate the home range statistics for each dataset, with particular interest in the moves.
 
-```{r home range statistics combined data}
+```{r home range statistics}
 
 # Calculating home range statistics
 
 dbar<-dbar(secr_data)
+
 moves<-moves(secr_data)
-mdmm<-MMDM(secr_data)
+
+mmdm<-MMDM(secr_data)
+
 rpsv<-RPSV(secr_data)
-rpsv<-as.matrix(cbind(unlist(rpsv)))
-rpsv<-rpsv[is.finite(rpsv),]
-width<-max(rpsv,na.rm = T)*4 # establishing the maximum width
+
+home_range<-as.data.frame(
+  cbind(dbar,
+        mmdm,
+        rpsv))
+
+home_range<-lapply(home_range,as.numeric) # setting as numeric
+
+width<-max(home_range$rpsv)*4 # establishing the maximum width
+
+rm(list=setdiff(ls(),c("secr_data","folder","folder_files","width","moves","data","fo","cpue_site")))
 ```
 
-We analyze the distance moved per individual between successive captures.
+We use the moves dataset to analyze potential differences in spatial behavior between sites, in case these could affect trap width.
 
 ```{r moves}
-library(car)
-library(onewaytests)
 
-table_moves<-unlist(moves)
-table_moves<-as.data.frame(table_moves)
-colnames(table_moves)<-"move"
+table_moves<-as.data.frame(
+  unlist(moves))
+
+colnames(table_moves)<-"moves"
+
 table_moves$site<-substr(row.names(table_moves),start=1,stop=3) # including site
-table_moves$move<-as.numeric(table_moves$move)
 
 # Exploration of data
 
-qqnorm(table_moves$move) # not quite normal
-shapiro.test(table_moves$move)
-leveneTest(table_moves$move,group=table_moves$site) # heterogeneity
-welch.test(move~site,data=table_moves,rate=0.1) # no difference among sites
-mean(table_moves$move)
-sd(table_moves$move)
-max(table_moves$move)
-aggregate(table_moves$move,by=list(table_moves$site),mean)
-aggregate(table_moves$move,by=list(table_moves$site),sd)
-rm(list=setdiff(ls(),c("secr_data","rpsv","width","folder")))
+qqnorm(table_moves$moves) # not normal
+
+leveneTest(table_moves$moves,group=table_moves$site) # heterogeneity of the variance
+
+welch.test(moves~site,data=table_moves,rate=0.1) # no significant difference
+
+aggregate(moves~site,table_moves,mean)
+
+remove(moves,table_moves)
 ```
 
-## **Analysis of density**
+### **FORMAL ANALYSIS**
 
 We begin the calculation of density by setting the buffer width.
 
-```{r definition of width combined data}
+```{r definition of width}
 
-# Calculating starting values
+# STARTING VALUES
 
-start<-secr.fit(secr_data,start=list(g0=0.1,sigma=max(rpsv,na.rm = T)),buffer=width,verify=F,detectfn = 0,biasLimit=0.01,method="Nelder-Mead",CL=T,trace=F)
+start<-secr.fit(secr_data,
+                start=list(g0=0.1,
+                           sigma=(width/4),# width was calculated as rpsv*4
+                           buffer=width,
+                           verify=F,
+                           detectfn = 0,
+                           biasLimit=0.01,
+                           method="Nelder-Mead",
+                           CL=T,
+                           trace=F)
+                )
 
-## Checking buffer width
+# CHECKING BUFFER WIDTH
 
-buffer_width<-esa.plot(start,max.buffer = width*2,detectfn = 0,noccasions = 9,session = c(names(secr_data))) # fitting density against buffer width
-buffer_width<-lapply(buffer_width,function(x) x$buffer[which.min(x$density)]) # finding for each site-session combination the buffer width were density stabilizes
-max_width<-max(unlist(buffer_width)) # maximum value of buffer width over all site-session combinations for which density stabilizes
-rm(list=setdiff(ls(),c("secr_data","max_width","start","folder")))
+buffer_width<-esa.plot(start,# fitting density against buffer width
+                       buffer = width*2,
+                       detectfn = 0,
+                       noccasions = 9,
+                       session = c(names(secr_data))
+                       )
+
+buffer_width<-lapply(buffer_width,
+                     function(x) x$buffer[which.min(x$density)]) # finding for each site-session combination the buffer width were density stabilizes for duplicate data
+
+buffer_width<-unlist(buffer_width)
+
+width<-max(buffer_width)
 ```
 
-Once buffer width is set, we determine the best spatial detection function using AICc, and examine the potential occurrence of learned responses from R. rattus.
+Once buffer width is set, we determine the actual model, including an evaluation of potential learned responses.
 
-```{r model density estimation with combined data}
-memory.limit(80000)
+```{r model density estimation}
 
-# Halfnormal model
+secr_model<-secr.fit(secr_data,
+                        model=list(g0~type),
+                        buffer=width,
+                        detectfn = 0,
+                        start=start,
+                        verify=T,
+                        method="Nelder-Mead",
+                        trace=F,
+                        CL=T)
 
-secr.halfnormal<-secr.fit(secr_data,buffer=max_width,detectfn = 0,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+secr_learned<-secr.fit(secr_data,
+                                model=list(g0~b+type),
+                                buffer=width,
+                                detectfn = 0,
+                                start=start,
+                                verify=T,
+                                method="Nelder-Mead",
+                                trace=F,
+                                CL=T)
 
-# Negative exponential model
+AIC(
+  secrlist(secr_model,
+           secr_learned))
 
-secr.negexp<-secr.fit(secr_data,buffer=max_width,detectfn = 2,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+final_model<-secr_model
 
-# Hazard rate model
+rm(list=setdiff(ls(),c("folder","folder_files","secr_data","data","final_model","fo","cpue_site")))
+```
 
-secr.hazrat<-secr.fit(secr_data,buffer=max_width,detectfn = 1,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+We now use the final models to derive density, extract RSE and compare results between Teno and Guaza.
 
-list_models<-list(secr.halfnormal,secr.negexp,secr.hazrat)
+```{r density analysis}
 
-AIC_table_detecfn<-lapply(list_models,function(x) AIC(x)) # calculating AIC
-AIC<-sapply(AIC_table_detecfn,"[[","AIC")
-AICc<-sapply(AIC_table_detecfn,"[[","AICc")
-model<-sapply(AIC_table_detecfn,"[[","model")
-detection_function<-sapply(AIC_table_detecfn,"[[","detectfn")
-AIC_table_detecfn<-cbind(model,detection_function,AIC,AICc)
-AIC_table_detecfn # halfnormal is the selected one
+# RETRIEVING DENSITY
 
-# Checking learned responses
+density<-derived(final_model,se.esa=F,se.D=T) # deriving density as a Hovitz-Thompson estimate
 
-secr.halfnorm.learned<-secr.fit(secr_data,model=list(g0~b),buffer=max_width,detectfn = 0,verify=F,start=start,method="Nelder-Mead",trace=F,CL=T)
+density_estimate<-lapply(density,"[[","estimate") # retaining only estimates
 
-AIC(secr.halfnorm.learned) # greater AIC than without learned responses
+density_estimate<-lapply(density_estimate,"[",2) # retrieving only density
+ 
+density_se<-lapply(density,"[[","SE.estimate") # retrieving SE
 
-final_model<-secr.halfnormal
+density_se<-lapply(density_se,"[",2) 
 
-density<-derived(final_model,se.esa=F,se.D=T)
+cvd<-lapply(density,"[[","CVD") # obtaining CVD (also called RSE) per site
 
-density_estimate<-lapply(density,"[[","estimate")
-density_estimate<-lapply(density_estimate,"[",2)
-density_se<-lapply(density,"[[","SE.estimate")
-density_se<-lapply(density_se,"[",2)
-cvd<-lapply(density,"[[","CVD")
 cvd<-lapply(cvd,"[",2)
 
-table_density<-cbind(do.call(rbind,density_estimate),do.call(rbind,density_se),do.call(rbind,cvd))
+table_density<-cbind(do.call(rbind,density_estimate),do.call(rbind,density_se),do.call(rbind,cvd)) # binding everything together to have density dataset
 
-colnames(table_density)<-c("density","se","cvd")
+colnames(table_density)<-c("density","se","rse")
 
 write.table(table_density,file=paste0(folder,"/density_data.csv"),sep=",",row.names = T,col.names = T)
 
 table_density<-as.data.frame(table_density)
+
 mean(table_density$density)
+
 sd(table_density$density)
 
-table_density$location<-c(rep("TENO",5),rep("GUAZA",2))
+table_density$site<-rownames(table_density) # site names are in the rows, extracting it to ease merging
 
-# Comparison of density between Teno and Guaza
+rownames(table_density)<-1:nrow(table_density)
+  
+table_density$npa<-NA # putting protected natural areas names
 
-qqnorm(table_density$density) # not quite normal
+table_density[table_density$site=="par"|table_density$site=="nam",]$npa<-"guaza"
+
+table_density[is.na(table_density$npa),]$npa<-"teno"
+
+## Comparison of density between Teno and Guaza
+
+qqnorm(table_density$density) # quite normal
+
 shapiro.test(table_density$density)
-leveneTest(table_density$density,table_density$location) # no heterogeneity
-kruskal.test(table_density$density,table_density$location)
-aggregate(table_density$density,list(table_density$location),mean)
-aggregate(table_density$density,list(table_density$location),sd)
+
+leveneTest(table_density$density,table_density$npa) # no heterogeneity
+
+kruskal.test(table_density$density,table_density$npa)
+
+aggregate(table_density$density,list(table_density$npa),mean)
+
+aggregate(table_density$density,list(table_density$npa),sd)
 ```
 
-```{r area used in each site}
+# **RELATING DENSITY TO ABUNDANCE AND LIZARD CONSUMPTION**
 
-library(readxl)
-library(adehabitatHR)
-library(raster)
+We now evaluate the relationship of rat density in each location with rat CPUE and lizard consumption indices.
 
-area<-read.csv(file=paste0(folder,sep="/","trap_location.csv"),sep=";")
+```{r density and abundance related to lizard consumption}
 
-# Separating the effort column 
+site_data<-merge(table_density,cpue_site,by="site") # merging density data to CPUE
 
-days<-lapply(c(1,3,5,7,9,11,13,15,17),function(x) substr(area$effort,start=x,stop=x)) 
-days<-do.call(cbind,days)
-colnames(days)<-lapply(seq(1,9,1),function(x) paste0("day",x))
-area<-cbind(area,days)
-remove(days)
+site_data<-merge(site_data,fo,by="site")
 
-# Creating a separate spatialpoints dataframe per site and days
+lapply(site_data[,c(6,13:14)],function(x) # correlation analyses between density, rat abundance and lizard consumption
+  with(site_data,cor.test(x,density,method="spearman")))
+```
 
-area_list<-lapply(area[,6:14],function(x) subset(area,x==1))
-date<-mapply(function(x,y) rep(x,y),x=names(area_list),y=lapply(area_list,nrow))
-area_table<-do.call(rbind,area_list)
-date<-unlist(date)
-area<-cbind(area_table,date)
-area<-area[,-c(6:14)]
-area_list<-split(area,list(area$site,area$date),drop=T)
-area_list<-lapply(area_list,function(x) SpatialPoints(x[,2:3],proj4string = CRS("+proj=utm +zone=28 +datum=WGS84 +units=m +no_defs")))
+# **IMPACT ON LIZARD POPULATIONS**
 
-# Calculating the area of each site 
+We finally evaluate how density is related to lizard population data.
 
-area_list<-lapply(area_list,function(x) mcp(x,percent=100)) # mcp in ha
-area_list<-lapply(area_list,"[[","area")
-area_table<-do.call(rbind,area_list)
-area_table<-as.data.frame(area_table)
-area_table$site<-substr(row.names(area_table),start=1,stop=3)
-area_table$date<-substr(row.names(area_table),start=5,stop=length(row.names(area_table)))
-colnames(area_table)[1]<-"area"
-mean_area<-tapply(area_table$area,area_table$site,mean)
-sd_area<-tapply(area_table$area,area_table$site,sd)
-area_table<-cbind(mean_area,sd_area)
-area_table
-rm(list = setdiff(ls(),"folder"))
+```{r lizard population data}
+
+lizard<-read_xlsx(
+  paste0(folder,"/lizards.xlsx")) # reading data
+
+site_data<-merge(site_data,lizard,by="site") # merging site data and lizard pop data
+
+site_data$reprod<-site_data$mal_num+site_data$fem_num # calculating number of reproductive individuals
+
+site_data$nonreprod<-site_data$juv_num+site_data$ave_num # calculating number of non-reproductive individuals
+
+site_data$poptrend<-(site_data$diff_liz)*100/site_data$liz_past # calculating population trend
+
+lapply(site_data[,c(15,23,26:28)],function(x)
+  with(site_data,cor.test(density,x,method="spearman")))
+
+lapply(site_data[,c(15,23,26:28)],function(x)
+  with(site_data,cor.test(foexc,x,method="spearman")))
+
+write.table(site_data,file=paste0(folder,"/","site_data.csv"),sep=";")
+```
+
+# **SUMMARY TABLE**
+
+We retrieve the data for the summary table.
+
+```{r summary table}
+
+summary_table<-count(data,outcome,site) # summary table for the manuscript
+
+summary_table<-summary_table[summary_table$outcome=="rat",] # number of rat captures per site
+
+feces<-count(data[data$outcome!="mus",],feces,site) # number of feces per site, after removing Mus musculus captures
+
+feces<-feces[feces$feces=="yes",]
+
+feces<-feces[complete.cases(feces),]
+
+feces<-feces[,2:3]
+
+colnames(feces)[2]<-"feces"
+
+marked_rats<-split(data,data$site)
+
+marked_rats<-lapply(marked_rats,function(x) x[complete.cases(x$id),])
+
+marked_rats<-lapply(marked_rats, function(x) length(unique(x$id)))
+
+marked_rats<-as.data.frame( # number of different rat individuals
+  sapply(split(data,data$site),
+         function(x)
+           length(unique(x$id))))
+
+dead<-count(data[data$outcome=="dead",],outcome,site) # dead individuals
+
+colnames(dead)[3]<-"dead"
+
+dead<-dead[,2:3]
+
+escaped<-count(data[data$outcome=="escaped",],outcome,site) # escaped individuals
+
+colnames(escaped)[3]<-"escaped"
+
+escaped<-escaped[,2:3]
+
+# RECAPTURES
+
+recaptures<-count(data,site,id) 
+
+recaptures<-recaptures[complete.cases(recaptures$id),] # removing empty cells
+
+recaptures<-recaptures[recaptures$n>1,] # retaining only individuals captured at least twice
+
+recaptures<-aggregate(n~site,recaptures,sum) # summing recaptures per site
+
+colnames(recaptures)[2]<-"recaptures"
+
+# DETECTION LIZARDS
+
+detection_lizards<-count(data,site,detection_lizards) 
+
+detection_lizards<-detection_lizards[detection_lizards$detection_lizards==1,] # retaining only detections
+
+detection_lizards<-detection_lizards[complete.cases(detection_lizards),] # removing empty cells
+
+detection_lizards<-detection_lizards[,c(1,3)]
+
+colnames(detection_lizards)[2]<-"detection_lizards"
+
+# NUMBER OF INDIVIDUALS THAT CONSUMED LIZARDS
+
+rat_detection_lizard<-count(data,site,id,detection_lizards) 
+
+rat_detection_lizard<-rat_detection_lizard[complete.cases(rat_detection_lizard),]
+
+rat_detection_lizard<-rat_detection_lizard[rat_detection_lizard$detection_lizards==1,]
+
+rat_detection_lizard<-sapply(split(rat_detection_lizard,rat_detection_lizard$site),nrow)
+
+rat_detection_lizard<-as.data.frame(rat_detection_lizard) # as.data.frame to merge easily
+
+# MERGING
+
+summary_table<-merge(summary_table,escaped,by="site",all.x=T)
+
+summary_table<-merge(summary_table,dead,by="site",all.x=T)
+
+summary_table<-cbind(summary_table,marked_rats,recaptures[,2],detection_lizards[,2],rat_detection_lizard,feces[,2])
+
+summary_table<-summary_table[,-c(2)]
+  
+colnames(summary_table)<-c("site","rats","escaped","dead","marked","recaptures","detection_lizatds","rat_detection_lizards","feces")
+
+summary_table<-merge(summary_table,site_data,by="site")
+
+summary_table$rats<-apply(summary_table[,2:4],1,function(x) sum(x,na.rm = T))
+
+write.table(summary_table,file=paste0(folder,"/","summary_table.csv"),sep=";")
 ```
 
 
-# **Correlation with rat abundance and frequency of occurrence**
-
-```{r correlations}
-
-#Re-uploading the tables
-
-library(readxl)
-density_table<-read.csv(file=paste0(folder,"/density_data.csv"),header=TRUE,sep=",")
-abundance_fo<-read_excel(path=paste0(folder,"/abundance_fo.xlsx"))
-density_table<-cbind(density_table,abundance_fo[,2:length(abundance_fo)])
-
-# Plotting
-
-plot(density_table$density,density_table$abundance)
-with(density_table,cor.test(density,abundance,method="spearman"))
-plot(density_table$density,density_table$fo_exc)
-text(density_table$density,density_table$fo_exc,density_table$site)
-plot(density_table$density,density_table$fo_ind)
-text(density_table$density,density_table$fo_ind,density_table$site)
-with(density_table,cor.test(density,fo_exc,method="spearman"))
-with(density_table,cor.test(density,fo_ind,method="spearman"))
-```
-
-# **Correlation with lizard census**
-
-```{r lizard census}
-library(car)
-
-# Calculating reproductive vs. non-reproductive individuals
-
-## Non-reproductive (juveniles+average-sized lizards)
-
-density_table$non_reproductive<-density_table$juv_num+density_table$ave_num
-
-## Reproductive individuals (males+females+non-identified individuals)
-
-density_table$non_identified<-density_table$liz_num-apply(density_table[,11:14],1,sum)
-density_table$reproductive<-density_table$fem_num+density_table$mal_num+density_table$non_identified
-
-# Calculating population trend
-
-density_table$population_trend<-(density_table$diff_liz/density_table$liz_past)*100
-
-# Analysis
-
-correlations_dens<-lapply(density_table[,c(7,15,16,18,19)],function(x) with(density_table,cor.test(density,x,method="spearman")))
-correlations_dens<-cbind(do.call(rbind,lapply(correlations_dens,"[[","estimate")),do.call(rbind,lapply(correlations_dens,"[[","p.value")))
-write.csv(correlations_dens,file=paste0(folder,sep="/","correlation_dens.csv"))
-
-correlations_fo_exc<-lapply(density_table[,c(7,15,16,18,19)],function(x) with(density_table,cor.test(fo_exc,x,method="spearman")))
-correlations_fo_exc<-cbind(do.call(rbind,lapply(correlations_fo_exc,"[[","estimate")),do.call(rbind,lapply(correlations_fo_exc,"[[","p.value")))
-write.csv(correlations_fo_exc,file=paste0(folder,sep="/","correlation_fo_exc.csv"))
-
-# Checking relationship between the number of lizards/rat density and site area
-
-lapply(density_table[,c(1,4,7)],function(x) with(density_table, cor.test(x,area,method="spearman")))
-
-write.csv(density_table,file=paste0(folder, sep="/","density_table.csv"),col.names=T)
-```
 
