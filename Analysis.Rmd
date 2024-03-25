@@ -22,9 +22,9 @@ p_load(readxl,dplyr,lubridate,tidyr,secr,car,onewaytests,VGAM)
 Now we set the folders were data will be stored.
 
 ```{r folder}
-folder<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data/"
+folder<-"D:/Research/Projects/A_2021_CSIC_rats/Research/Data/"
 
-folder_files<-"E:/Research/Projects/A_2021_CSIC_rats/Research/Data/files"
+folder_files<-"D:/Research/Projects/A_2021_CSIC_rats/Research/Data/files"
 ```
 
 We create the data for the analysis.
@@ -218,7 +218,7 @@ rat_detection_lizard<-as.data.frame(rat_detection_lizard) # as.data.frame to mer
 
 rats<-count(data,site,outcome,id)
 
-rats<-rats[rats$outcome=="rat" | rats$outcome=="escaped"|rats$outcome=="dead", ] # number off rats captured
+rats<-rats[rats$outcome=="rat" | rats$outcome=="escaped"|rats$outcome=="dead", ] # number of rats captured
 
 rats<-sapply(split(rats,rats$site),
              function(x) length(unique(x$id))) # distinct individuals
